@@ -1,8 +1,24 @@
 # memory-os
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node 20+](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![MCP](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript)](https://www.typescriptlang.org/)
+
 **Your AI's memory, owned by you.**
 
 A unified, local-first memory vault exposed via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Works with Claude Desktop, Cursor, Cline, Zed, or any MCP-compatible client.
+
+---
+
+## Why memory-os?
+
+Most AI memory tools either lock your data into a vendor's cloud or live inside a single client. memory-os runs on your machine, stores everything in your own Postgres, and speaks MCP — so your context follows you between Claude Desktop, Cursor, Cline, and whatever comes next. No vendor lock-in, no syncing through someone else's server, no proprietary format.
+
+---
+
+![demo](./docs/demo.gif)
+<!-- TODO: record a 30-second Quicktime capture of Claude Desktop using remember + recall, drop it at docs/demo.gif -->
 
 ---
 
@@ -201,10 +217,7 @@ npm run typecheck
 
 ## Contributing
 
-PRs welcome. Please read `CONTRIBUTING.md` (coming soon). For now:
-1. Open an issue describing the change
-2. Fork + branch off `main`
-3. Keep commits scoped: `feat(memory): …`, `fix(mcp): …`, `docs: …`
+PRs welcome. Open an issue first for anything non-trivial. Keep commits scoped: `feat(memory): …`, `fix(mcp): …`, `docs: …`
 
 ---
 
