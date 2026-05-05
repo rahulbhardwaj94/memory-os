@@ -1,0 +1,132 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  namespaces Namespace[]
+  memories   Memory[]
+}
+
+// ─── Namespaces ───────────────────────────────────────────────────────────────
+
+model Namespace {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  parentId  String?
+  createdAt DateTime @default(now())
+
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent   Namespace?  @relation("NamespaceHierarchy", fields: [parentId], references: [id])
+  children Namespace[] @relation("NamespaceHierarchy")
+  memories Memory[]
+
+  // NOTE: parentId is nullable; Postgres NULL != NULL in unique checks, so two
+  // root namespaces with the same name for the same user pass DB validation.
+  // MemoryService.createNamespace() enforces uniqueness for root entries in app code.
+  // Fix pre-v1.0: migrate @@unique to a NULLS NOT DISTINCT index (Postgres 15+).
+  @@unique([userId, name, parentId])
+  @@index([userId])
+}
+
+// ─── Memories ─────────────────────────────────────────────────────────────────
+
+enum MemoryType {
+  EPISODIC
+  SEMANTIC
+  PROCEDURAL
+}
+
+enum MemoryStatus {
+  PENDING_EMBEDDING
+  READY
+  FAILED
+}
+
+model Memory {
+  id          String       @id @default(cuid())
+  userId      String
+  namespaceId String
+  type        MemoryType
+  content     String
+  status      MemoryStatus @default(PENDING_EMBEDDING)
+
+  // Populated once status transitions to READY. Queried via $queryRaw only —
+  // Prisma has no native vector type. HNSW index is a partial index on READY
+  // rows added in the init migration SQL (see prisma/migrations/).
+  embedding      Unsupported("vector(1536)")?
+  embeddingError String?
+
+  metadata Json @default("{}")
+
+  // { client: string; sessionId: string; timestamp: string }
+  source Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // accessCount uses BigInt — a hot memory recalled millions of times over years
+  // would overflow Int (max ~2.1B). Prisma returns JS bigint; serialise with
+  // the BigInt.prototype.toJSON shim added in main.ts.
+  accessCount    BigInt    @default(0)
+  lastAccessedAt DateTime?
+  deletedAt      DateTime?
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  namespace Namespace @relation(fields: [namespaceId], references: [id], onDelete: Cascade)
+
+  tags          MemoryTag[]
+  relationsFrom MemoryRelation[] @relation("RelationFrom")
+  relationsTo   MemoryRelation[] @relation("RelationTo")
+
+  @@index([userId])
+  @@index([namespaceId])
+  @@index([type])
+  @@index([status])
+  @@index([userId, lastAccessedAt])
+  @@index([deletedAt])
+}
+
+// ─── Graph layer ──────────────────────────────────────────────────────────────
+
+model MemoryRelation {
+  id           String   @id @default(cuid())
+  fromMemoryId String
+  toMemoryId   String
+  relationType String
+  weight       Float    @default(1.0)
+  createdAt    DateTime @default(now())
+
+  fromMemory Memory @relation("RelationFrom", fields: [fromMemoryId], references: [id], onDelete: Cascade)
+  toMemory   Memory @relation("RelationTo", fields: [toMemoryId], references: [id], onDelete: Cascade)
+
+  @@unique([fromMemoryId, toMemoryId, relationType])
+  @@index([fromMemoryId])
+  @@index([toMemoryId])
+}
+
+// ─── Tags ─────────────────────────────────────────────────────────────────────
+
+model MemoryTag {
+  memoryId  String
+  tag       String
+  createdAt DateTime @default(now())
+
+  memory Memory @relation(fields: [memoryId], references: [id], onDelete: Cascade)
+
+  @@id([memoryId, tag])
+  @@index([tag])
+}

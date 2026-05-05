@@ -1,0 +1,20 @@
+{
+  "name": "@memory-os/mcp-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin MCP client SDK for testing the memory-os server",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}
