@@ -18,5 +18,5 @@
     "emitDecoratorMetadata": true,
     "resolveJsonModule": true
   },
-  "exclude": ["node_modules", "dist", "coverage", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "coverage", "**/*.spec.ts", "apps/web/**"]
 }

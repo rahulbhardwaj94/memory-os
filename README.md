@@ -22,39 +22,64 @@ Most AI memory tools either lock your data into a vendor's cloud or live inside 
 
 ---
 
-## 60-second quickstart
+## Quickstart
 
-**Prerequisites:** Node 20+, Docker, an OpenAI API key.
+**Prerequisites:** [Node 20+](https://nodejs.org) · [Docker](https://docker.com/products/docker-desktop)
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/rahulbhardwaj94/memory-os
 cd memory-os
-npm install
-
-# 2. Configure
-cp .env.example .env
-# Edit .env and set OPENAI_API_KEY=sk-...
-
-# 3. Start Postgres with pgvector
-docker compose up -d
-
-# 4. Run database migrations
-npm run migrate
-
-# 5. Build and start the MCP server
-npm run build
-npm run mcp:start
+npm run setup
 ```
 
-The server is now listening on stdio, ready for an MCP client.
+The setup wizard will:
+- Ask which embedding provider you want (default: **Ollama — free and fully local**)
+- Generate a secure auth secret and write your `.env` automatically
+- Start Postgres, run migrations, and build the server
+
+Then start everything with one command:
+
+```bash
+npm run dev   # HTTP server :3000 + Web UI :3001
+```
+
+Open **http://localhost:3001**, create your account, go to **Settings → API Keys**, and paste the key into your MCP client config (see below).
+
+---
+
+## Embedding providers
+
+Pick one — set `EMBEDDING_PROVIDER` in `.env` and run the matching migration.
+
+| Provider | Cost | Dims | Migration | Extra env vars |
+|---|---|---|---|---|
+| `openai` | Paid | 1536 | _(none)_ | `OPENAI_API_KEY` |
+| `ollama` | **Free, local** | 768 | `npm run migrate:ollama` | — |
+| `gemini` | Free tier | 768 | `npm run migrate:gemini` | `GEMINI_API_KEY` |
+| `voyage` | 200M tokens/mo free | 512 | `npm run migrate:voyage` | `VOYAGE_API_KEY` |
+| `cohere` | 1000 calls/mo free | 1024 | `npm run migrate:cohere` | `COHERE_API_KEY` |
+
+**Fully free setup (Ollama):**
+```bash
+brew install ollama
+ollama serve
+ollama pull nomic-embed-text
+
+# In .env:
+EMBEDDING_PROVIDER=ollama
+
+npm run migrate && npm run generate && npm run migrate:ollama
+```
 
 ---
 
 ## Claude Desktop setup
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`
-(create the file if it doesn't exist):
+After running `npm run setup` and creating your account:
+
+1. Go to **http://localhost:3001/settings** → **API Keys** → create a key named `Claude Desktop`
+2. Copy the `mo_...` key — it is shown only once
+3. Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -64,21 +89,55 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`
       "args": ["/absolute/path/to/memory-os/apps/server/dist/mcp/mcp-server.js"],
       "env": {
         "DATABASE_URL": "postgresql://memory_os:memory_os@localhost:5432/memory_os",
-        "OPENAI_API_KEY": "sk-your-key-here",
-        "EMBEDDING_PROVIDER": "openai"
+        "EMBEDDING_PROVIDER": "ollama",
+        "MCP_API_KEY": "mo_your_key_here"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. You should see memory-os tools in the tool picker.
+4. Restart Claude Desktop — you'll see memory-os tools in the tool picker.
 
 **Quick test:**
 1. Say: *"Remember that I prefer NestJS over Express"*
 2. Open a new conversation
 3. Say: *"What frameworks do I prefer?"*
-4. Claude will use the `recall` tool to retrieve your preference.
+
+---
+
+## Web UI
+
+A browser dashboard to browse, search, and manage your vault.
+
+```bash
+# After running npm run start (HTTP server on :3000)
+cp apps/web/.env.local.example apps/web/.env.local
+
+npm run web   # → http://localhost:3001
+```
+
+Open `http://localhost:3001` and create an account. Your first account becomes your vault owner.
+
+**MCP clients (Claude Desktop, Cursor, Cline):** after signing up, go to **Settings → API Keys**, create a named key, and set it in your MCP config:
+
+```json
+{
+  "mcpServers": {
+    "memory-os": {
+      "command": "node",
+      "args": ["/absolute/path/to/memory-os/apps/server/dist/mcp/mcp-server.js"],
+      "env": {
+        "DATABASE_URL": "postgresql://memory_os:memory_os@localhost:5432/memory_os",
+        "EMBEDDING_PROVIDER": "ollama",
+        "MCP_API_KEY": "mo_your_key_here"
+      }
+    }
+  }
+}
+```
+
+If `MCP_API_KEY` is omitted, the MCP server falls back to the `DEFAULT_USER_EMAIL` auto-created user (backwards-compatible with v0.1–v0.3 setups).
 
 ---
 
@@ -94,30 +153,38 @@ Restart Claude Desktop. You should see memory-os tools in the tool picker.
 ┌─────────────────────────────────────────────────────────────┐
 │                   memory-os MCP server                      │
 │                                                             │
-│  Tools: remember · recall · forget · list_namespaces        │
-│         create_namespace · get_memory · list_recent         │
+│  Vault tools:   remember · recall · forget                  │
+│                 list_namespaces · create_namespace          │
+│                 get_memory · list_recent                    │
+│  Session tools: session_remember · session_recall           │
+│                 session_clear                               │
 │                                                             │
-│  NestJS application context (DI, PrismaService)             │
-└──────────────────┬──────────────────┬───────────────────────┘
-                   │                  │
-          ┌────────▼────────┐  ┌──────▼──────────────────┐
-          │  MemoryService  │  │    EmbeddingProvider     │
-          │                 │  │  (OpenAI text-emb-3-sm)  │
-          │  remember()     │  │  Swappable: Voyage,      │
-          │  recall()       │  │  Cohere, local models    │
-          │  forget()       │  └──────────────────────────┘
-          │  relate()       │
-          │  traverse()     │
-          └────────┬────────┘
-                   │ Prisma ORM
-                   ▼
+│  NestJS · QueueModule (pg-boss) · WorkingMemoryModule       │
+└──────────┬──────────────────┬───────────────────────────────┘
+           │                  │
+  ┌────────▼────────┐  ┌──────▼──────────────────────────┐
+  │  MemoryService  │  │       EmbeddingProvider          │
+  │                 │  │  openai · ollama · voyage        │
+  │  remember()     │  │  cohere · gemini                 │
+  │  recall()       │  └──────────────────────────────────┘
+  │  forget()       │
+  │  relate()       │         ┌───────────────────────┐
+  │  traverse()     │         │  WorkingMemoryService  │
+  └────────┬────────┘         │  in-process Map + TTL  │
+           │                  └───────────────────────┘
+           │ Prisma ORM
+           │              ┌────────────────────────────┐
+           │              │  EmbeddingWorker (pg-boss)  │
+           │              │  retries · dead-letter      │
+           │              └────────────────────────────┘
+           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Postgres 16 + pgvector                    │
 │                                                             │
-│  Memory      — content, embedding vector(1536), HNSW index  │
-│  Namespace   — hierarchical (personal / work / acme)        │
-│  MemoryTag   — cheap btree tag filtering                    │
-│  MemoryRelation — directed weighted graph edges             │
+│  Memory        — content, embedding vector, HNSW index      │
+│  Namespace     — hierarchical (personal / work / acme)      │
+│  MemoryTag     — btree tag filtering                        │
+│  MemoryRelation— directed weighted graph edges              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -137,35 +204,50 @@ score = 0.7 × cosine_similarity
       + 0.1 × log(accessCount + 1)  ← popularity boost
 ```
 
+Results below `minScore` (default 0.5 in the Web UI) are filtered out.
+
 ---
 
 ## MCP tools reference
 
+### Vault tools
+
 | Tool | Description | Key params |
 |---|---|---|
-| `remember` | Store a memory | `content`, `namespace?`, `type?`, `tags?` |
-| `recall` | Semantic search | `query`, `namespace?`, `type?`, `limit?` |
+| `remember` | Store a memory in the vault | `content`, `namespace?`, `type?`, `tags?` |
+| `recall` | Semantic search with hybrid scoring | `query`, `namespace?`, `type?`, `limit?` |
 | `forget` | Soft-delete a memory | `memoryId` |
 | `list_namespaces` | List namespaces | `parentId?` |
 | `create_namespace` | Create a namespace | `name`, `parentId?` |
-| `get_memory` | Fetch by ID | `memoryId` |
-| `list_recent` | Recent memories | `namespace?`, `limit?` |
+| `get_memory` | Fetch a memory by ID | `memoryId` |
+| `list_recent` | Most recent memories | `namespace?`, `limit?` |
+| `relate` | Create a directed edge between two memories | `fromMemoryId`, `toMemoryId`, `relationType`, `weight?` |
+| `traverse` | Walk the memory graph from a starting point | `memoryId`, `maxDepth?` |
+
+### Session tools
+
+Ephemeral per-session context — not persisted to the vault, auto-expires when the session ends.
+
+| Tool | Description |
+|---|---|
+| `session_remember` | Add a note to session working memory |
+| `session_recall` | Retrieve all notes for this session |
+| `session_clear` | Wipe session working memory |
 
 ---
 
 ## Namespace paths
 
-Namespaces are hierarchical. The `remember` and `recall` tools accept slash-separated paths:
+Namespaces are hierarchical. Accept slash-separated paths:
 
 ```
 personal
 work
 work/acme
 work/acme/sprint-42
-side-projects/memory-os
 ```
 
-`recall` with a parent namespace also searches all descendants by default.
+`recall` with a parent namespace searches all descendants by default.
 
 ---
 
@@ -174,43 +256,59 @@ side-projects/memory-os
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | — | Postgres connection string |
-| `OPENAI_API_KEY` | — | Required for embeddings |
-| `EMBEDDING_PROVIDER` | `openai` | Embedding backend (only `openai` in v0.1) |
-| `DEFAULT_USER_EMAIL` | `default@memory-os.local` | Email for the auto-created default user |
+| `EMBEDDING_PROVIDER` | `openai` | `openai` · `ollama` · `voyage` · `cohere` · `gemini` |
+| `OPENAI_API_KEY` | — | Required when provider is `openai` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `nomic-embed-text` | Ollama embedding model |
+| `VOYAGE_API_KEY` | — | Required when provider is `voyage` |
+| `VOYAGE_MODEL` | `voyage-3-lite` | Voyage model (512 dims) |
+| `COHERE_API_KEY` | — | Required when provider is `cohere` |
+| `COHERE_MODEL` | `embed-english-v3.0` | Cohere model (1024 dims) |
+| `GEMINI_API_KEY` | — | Required when provider is `gemini` |
+| `SESSION_TTL_SECONDS` | `3600` | Session working memory TTL |
+| `DEFAULT_USER_EMAIL` | `default@memory-os.local` | Auto-created default user |
 | `MCP_CLIENT_NAME` | `mcp` | Written into `source.client` on every memory |
-| `PORT` | `3000` | HTTP server port (REST API, not MCP) |
+| `PORT` | `3000` | HTTP server port |
+| `RATE_LIMIT_MAX` | `120` | Max REST requests per window per IP |
+| `RATE_LIMIT_TTL_MS` | `60000` | Rate-limit window in milliseconds |
+| `CORS_ORIGIN` | `http://localhost:3001` | Allowed CORS origin(s) in production |
 
 ---
 
 ## Development
 
 ```bash
-# Run in watch mode (REST server)
-npm run start:dev --workspace=apps/server
+# HTTP server (watch mode)
+npm run start:dev
 
-# Run MCP server with ts-node (no build step)
-npm run mcp:dev --workspace=apps/server
+# MCP server (no build step)
+npm run mcp:dev --workspace=@memory-os/server
 
-# Unit tests
-npm run test --workspace=apps/server
+# Web UI (dev mode)
+npm run web
 
-# E2E tests (requires running Postgres)
-npm run test:e2e --workspace=apps/server
+# Tests (55 tests)
+cd apps/server && npm test
 
-# Typecheck
-npm run typecheck
+# Typecheck (server + web)
+npx tsc --noEmit -p tsconfig.base.json
+cd apps/web && npx tsc --noEmit
 ```
 
 ---
 
 ## Roadmap
 
-- **v0.2 — Working memory in Redis**: ephemeral per-session context that flushes automatically
-- **v0.2 — BullMQ embedding queue**: replace `setImmediate` fire-and-forget with a proper job queue; adds retry, dead-letter, visibility
-- **v0.3 — More embedding providers**: Voyage AI, Cohere, Ollama (local), Gemini
-- **v0.3 — Web UI**: browse, search, and edit your memory vault in a browser
-- **v0.4 — Multi-user**: full auth (Clerk / Better Auth), per-user API keys
-- **v0.5 — Hosted version**: managed Postgres + embeddings, zero-config setup
+- **v0.2 ✅ — pg-boss embedding queue**: retry, dead-letter, visibility — no Redis required
+- **v0.2 ✅ — Ollama support**: fully free, local embeddings
+- **v0.2 ✅ — Working memory**: ephemeral per-session context via `session_*` tools
+- **v0.3 ✅ — More embedding providers**: Voyage AI, Cohere, Gemini
+- **v0.3 ✅ — Web UI**: browse and search your vault at `http://localhost:3001`
+- **v0.3 ✅ — Production hardening**: rate limiting, health check, OpenAPI docs, CORS, ValidationPipe
+- **v0.3 ✅ — Graph MCP tools**: `relate` and `traverse` now exposed to MCP clients
+- **v0.3 ✅ — CI/CD**: GitHub Actions pipeline (test + typecheck + lint + build)
+- **v0.4 ✅ — Multi-user auth**: Better Auth (email/password), named API keys, per-user scoping
+- **v0.5 — Hosted option**: managed Postgres + embeddings, zero-config setup
 - **v1.0 — Federated sync**: optional encrypted sync across devices
 
 ---
