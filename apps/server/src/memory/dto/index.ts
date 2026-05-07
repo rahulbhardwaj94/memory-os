@@ -35,6 +35,7 @@ export const RecallInputSchema = z.object({
   since: z.coerce.date().optional(),
   until: z.coerce.date().optional(),
   limit: z.number().int().min(1).max(50).default(10),
+  minScore: z.number().min(0).max(1).optional(),
 });
 export type RecallInput = z.infer<typeof RecallInputSchema>;
 
@@ -51,7 +52,7 @@ export type ForgetInput = z.infer<typeof ForgetInputSchema>;
 export const ListInputSchema = z.object({
   userId: z.string().min(1),
   namespaceId: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().min(1).optional(),
 });
 export type ListInput = z.infer<typeof ListInputSchema>;
@@ -83,3 +84,15 @@ export const CreateNamespaceInputSchema = z.object({
   parentId: z.string().min(1).optional(),
 });
 export type CreateNamespaceInput = z.infer<typeof CreateNamespaceInputSchema>;
+
+// ─── Ephemeral Namespace ──────────────────────────────────────────────────────
+
+export const EphemeralTtlSchema = z.enum(['1h', '24h', '7d']);
+export type EphemeralTtl = z.infer<typeof EphemeralTtlSchema>;
+
+export const CreateEphemeralNamespaceInputSchema = z.object({
+  userId: z.string().min(1),
+  name: z.string().min(1).max(200),
+  ttl: EphemeralTtlSchema,
+});
+export type CreateEphemeralNamespaceInput = z.infer<typeof CreateEphemeralNamespaceInputSchema>;

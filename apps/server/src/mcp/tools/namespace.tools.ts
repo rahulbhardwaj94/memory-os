@@ -102,6 +102,51 @@ export function registerNamespaceTools(
   );
 
   server.registerTool(
+    'create_scratchpad',
+    {
+      description:
+        'Create a temporary scratchpad namespace that auto-deletes after a TTL. ' +
+        'Use this when exploring a problem, debugging, or working through a task where the context should not persist permanently. ' +
+        'Store memories in the returned namespace ID, then abandon it — the system purges it automatically.',
+      inputSchema: {
+        name: z.string().min(1).max(200).describe('Scratchpad name, e.g. "debug-auth-flow"'),
+        ttl: z
+          .enum(['1h', '24h', '7d'])
+          .describe('How long before auto-deletion: 1h, 24h, or 7d'),
+      },
+    },
+    async ({ name, ttl }) => {
+      try {
+        const ns = await memoryService.createEphemeralNamespace({ userId: ctx.userId, name, ttl });
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                id: ns.id,
+                name: ns.name,
+                isEphemeral: true,
+                expiresAt: (ns as { expiresAt?: Date | null }).expiresAt,
+                ttl,
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  server.registerTool(
     'get_memory',
     {
       description: 'Retrieve a specific memory by its ID.',

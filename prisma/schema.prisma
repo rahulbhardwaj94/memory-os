@@ -9,25 +9,110 @@ datasource db {
   extensions = [pgvector(map: "vector")]
 }
 
-// ─── Users ────────────────────────────────────────────────────────────────────
+// ─── Users & Auth (Better Auth schema) ───────────────────────────────────────
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  createdAt DateTime @default(now())
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String    @default("")
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
 
   namespaces Namespace[]
   memories   Memory[]
+  sessions   Session[]
+  accounts   Account[]
+  apiKeys    ApiKey[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([accountId, providerId])
+}
+
+model Verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  @@index([identifier])
+}
+
+model ApiKey {
+  id                  String    @id @default(cuid())
+  name                String?
+  start               String?
+  prefix              String?
+  key                 String    @unique
+  userId              String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean   @default(true)
+  rateLimitEnabled    Boolean?  @default(false)
+  rateLimitTimeWindow Int?
+  rateLimitMax        Int?
+  requestCount        Int?      @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+  permissions         String?
+  metadata            String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // ─── Namespaces ───────────────────────────────────────────────────────────────
 
 model Namespace {
-  id        String   @id @default(cuid())
-  userId    String
-  name      String
-  parentId  String?
-  createdAt DateTime @default(now())
+  id          String    @id @default(cuid())
+  userId      String
+  name        String
+  parentId    String?
+  isEphemeral Boolean   @default(false)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   parent   Namespace?  @relation("NamespaceHierarchy", fields: [parentId], references: [id])
@@ -40,6 +125,7 @@ model Namespace {
   // Fix pre-v1.0: migrate @@unique to a NULLS NOT DISTINCT index (Postgres 15+).
   @@unique([userId, name, parentId])
   @@index([userId])
+  @@index([expiresAt])
 }
 
 // ─── Memories ─────────────────────────────────────────────────────────────────

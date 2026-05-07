@@ -18,6 +18,9 @@ import { registerRememberTool } from './tools/remember.tool';
 import { registerRecallTool } from './tools/recall.tool';
 import { registerForgetTool } from './tools/forget.tool';
 import { registerNamespaceTools } from './tools/namespace.tools';
+import { registerSessionTools } from './tools/session.tools';
+import { registerGraphTools } from './tools/graph.tools';
+import { WorkingMemoryService } from '../working-memory/working-memory.service';
 
 const log = (msg: string): void => {
   process.stderr.write(`[memory-os] ${msg}\n`);
@@ -28,16 +31,33 @@ async function main(): Promise<void> {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: false });
 
   const memoryService = app.get(MemoryService);
+  const workingMemory = app.get(WorkingMemoryService);
   const prisma = app.get(PrismaService);
 
-  // Ensure the default user exists (upsert is idempotent)
-  const defaultUser = await prisma.user.upsert({
-    where: { email: env.DEFAULT_USER_EMAIL },
-    create: { email: env.DEFAULT_USER_EMAIL },
-    update: {},
-  });
+  let userId: string;
 
-  log(`Ready — user: ${defaultUser.id} (${env.DEFAULT_USER_EMAIL})`);
+  if (env.MCP_API_KEY) {
+    // Validate the API key and resolve the owning user
+    const keyRecord = await prisma.apiKey.findUnique({
+      where: { key: env.MCP_API_KEY },
+      include: { user: true },
+    });
+    if (!keyRecord || !keyRecord.enabled) {
+      log('Fatal: MCP_API_KEY is invalid or disabled. Generate one in the Web UI → Settings → API Keys.');
+      process.exit(1);
+    }
+    userId = keyRecord.userId;
+    log(`Ready — user: ${keyRecord.user.email} [API key: ${keyRecord.name ?? keyRecord.id}]`);
+  } else {
+    // Backwards-compatible default: auto-create a single local user
+    const defaultUser = await prisma.user.upsert({
+      where: { email: env.DEFAULT_USER_EMAIL },
+      create: { email: env.DEFAULT_USER_EMAIL, name: 'Default User', emailVerified: false },
+      update: {},
+    });
+    userId = defaultUser.id;
+    log(`Ready — user: ${defaultUser.id} (${env.DEFAULT_USER_EMAIL}) [default user]`);
+  }
 
   const SESSION_ID = randomUUID();
 
@@ -54,7 +74,7 @@ async function main(): Promise<void> {
 
     for (const part of parts) {
       const existing = await prisma.namespace.findFirst({
-        where: { userId: defaultUser.id, name: part, parentId: parentId ?? null },
+        where: { userId, name: part, parentId: parentId ?? null },
       });
 
       if (existing) {
@@ -62,7 +82,7 @@ async function main(): Promise<void> {
         parentId = existing.id;
       } else {
         const created = await prisma.namespace.create({
-          data: { userId: defaultUser.id, name: part, parentId },
+          data: { userId, name: part, parentId },
         });
         nsId = created.id;
         parentId = created.id;
@@ -73,7 +93,7 @@ async function main(): Promise<void> {
   };
 
   const ctx = {
-    userId: defaultUser.id,
+    userId,
     sessionId: SESSION_ID,
     clientName: env.MCP_CLIENT_NAME,
     resolveNamespace,
@@ -85,6 +105,8 @@ async function main(): Promise<void> {
   registerRecallTool(server, memoryService, ctx);
   registerForgetTool(server, memoryService, ctx);
   registerNamespaceTools(server, memoryService, ctx);
+  registerSessionTools(server, workingMemory, ctx);
+  registerGraphTools(server, memoryService, { userId: ctx.userId });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

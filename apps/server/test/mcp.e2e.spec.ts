@@ -62,7 +62,7 @@ describe('MCP server e2e', () => {
     await client.close().catch(() => undefined);
   });
 
-  it('lists all 7 tools', async () => {
+  it('lists all 10 tools', async () => {
     const { tools } = await client.listTools();
     const names = tools.map(t => t.name);
 
@@ -73,7 +73,10 @@ describe('MCP server e2e', () => {
     expect(names).toContain('create_namespace');
     expect(names).toContain('get_memory');
     expect(names).toContain('list_recent');
-    expect(names).toHaveLength(7);
+    expect(names).toContain('session_remember');
+    expect(names).toContain('session_recall');
+    expect(names).toContain('session_clear');
+    expect(names).toHaveLength(10);
   });
 
   it('create_namespace: creates a root namespace', async () => {
@@ -166,5 +169,30 @@ describe('MCP server e2e', () => {
     const namespaces = JSON.parse(text) as Array<{ name: string }>;
     const found = namespaces.some(n => n.name === 'e2e-test');
     expect(found).toBe(true);
+  });
+
+  it('session_remember + session_recall: round-trips ephemeral context', async () => {
+    await client.callTool({ name: 'session_remember', arguments: { content: 'working on auth refactor' } });
+    await client.callTool({ name: 'session_remember', arguments: { content: 'next step: write tests' } });
+
+    const result = await client.callTool({ name: 'session_recall', arguments: {} });
+    expect(result.isError).toBeFalsy();
+
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? '';
+    const { entries } = JSON.parse(text) as { entries: Array<{ content: string }> };
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.content).toBe('working on auth refactor');
+    expect(entries[1]?.content).toBe('next step: write tests');
+  });
+
+  it('session_clear: wipes session context', async () => {
+    await client.callTool({ name: 'session_remember', arguments: { content: 'to be cleared' } });
+    await client.callTool({ name: 'session_clear', arguments: {} });
+
+    const result = await client.callTool({ name: 'session_recall', arguments: {} });
+    const text = (result.content as Array<{ text: string }>)[0]?.text ?? '';
+    const { entries } = JSON.parse(text) as { entries: unknown[] };
+    expect(entries).toHaveLength(0);
   });
 });

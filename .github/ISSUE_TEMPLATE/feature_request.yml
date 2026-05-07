@@ -1,0 +1,53 @@
+name: Feature Request
+description: Propose a new feature or improvement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a feature request, please check the [roadmap](../../README.md#roadmap) and open issues in case it is already planned or being discussed.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What are you trying to accomplish? What pain point does this address?
+      placeholder: "I use memory-os across multiple machines and I can't easily..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you'd like to see added or changed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you tried any workarounds? Why don't they work for you?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - MCP tools
+        - REST API
+        - Web UI
+        - Embedding providers
+        - Auth / multi-user
+        - Hosting / deployment
+        - Performance
+        - Documentation
+        - Other
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this feature

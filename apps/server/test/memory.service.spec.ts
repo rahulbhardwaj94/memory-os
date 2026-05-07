@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryService } from '../src/memory/memory.service';
 import type { PrismaService } from '../src/prisma/prisma.service';
 import type { EmbeddingProvider } from '../src/embeddings/embedding-provider.interface';
+import type { QueueService } from '../src/queue/queue.service';
 import { MemoryType, MemoryStatus } from '@prisma/client';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -44,6 +45,7 @@ describe('MemoryService', () => {
     embedBatch: ReturnType<typeof vi.fn>;
     dimensions: number;
   };
+  let queue: { send: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     embeddingProvider = {
@@ -78,10 +80,13 @@ describe('MemoryService', () => {
       $queryRaw: vi.fn().mockResolvedValue([]),
     };
 
+    queue = { send: vi.fn().mockResolvedValue('job-id-1') };
+
     // Bypass NestJS DI — @Injectable() is a marker; the constructor works as a plain class.
     service = new MemoryService(
       prisma as unknown as PrismaService,
       embeddingProvider as unknown as EmbeddingProvider,
+      queue as unknown as QueueService,
     );
   });
 
@@ -144,6 +149,17 @@ describe('MemoryService', () => {
       const result = await service.remember(baseInput);
       expect(result.tags).toHaveLength(1);
     });
+
+    it('enqueues an embedding job instead of generating inline', async () => {
+      await service.remember(baseInput);
+
+      expect(queue.send).toHaveBeenCalledWith(
+        'embed-memory',
+        { memoryId: 'mem_1', content: baseInput.content },
+        expect.objectContaining({ retryLimit: 3 }),
+      );
+      expect(embeddingProvider.embed).not.toHaveBeenCalled();
+    });
   });
 
   // ─── recall ────────────────────────────────────────────────────────────────
@@ -159,6 +175,21 @@ describe('MemoryService', () => {
     it('returns empty array when no results', async () => {
       const results = await service.recall(baseInput);
       expect(results).toEqual([]);
+    });
+
+    it('filters results below minScore threshold', async () => {
+      const now = new Date();
+      // cosine 0.8 → hybrid ≈ 0.7*0.8 + 0.2*1.0 = 0.76 (passes 0.5)
+      // cosine 0.2 → hybrid ≈ 0.7*0.2 + 0.2*1.0 = 0.34 (fails 0.5)
+      const rows = [
+        { ...makeMemory({ id: 'mem_high', createdAt: now, accessCount: BigInt(0) }), cosine_score: 0.8 },
+        { ...makeMemory({ id: 'mem_low',  createdAt: now, accessCount: BigInt(0) }), cosine_score: 0.2 },
+      ];
+      prisma.$queryRaw.mockResolvedValue(rows);
+
+      const results = await service.recall({ ...baseInput, minScore: 0.5 });
+      expect(results.map(r => r.id)).toContain('mem_high');
+      expect(results.map(r => r.id)).not.toContain('mem_low');
     });
 
     it('re-ranks raw rows by hybrid score', async () => {

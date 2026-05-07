@@ -1,8 +1,11 @@
 import { Injectable, Inject } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { Prisma, MemoryType, MemoryStatus } from '@prisma/client';
 import type { Namespace } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EMBEDDING_PROVIDER, EmbeddingProvider } from '../embeddings/embedding-provider.interface';
+import { QueueService } from '../queue/queue.service';
+import { EMBEDDING_QUEUE } from './embedding.worker';
 import type { MemoryWithTags, MemoryRecordWithScore } from './entities/memory.entity';
 import {
   RememberInputSchema,
@@ -11,13 +14,85 @@ import {
   RelateInputSchema,
   TraverseInputSchema,
   CreateNamespaceInputSchema,
+  CreateEphemeralNamespaceInputSchema,
   type RememberInput,
   type RecallInput,
   type ListInput,
   type RelateInput,
   type TraverseInput,
   type CreateNamespaceInput,
+  type CreateEphemeralNamespaceInput,
 } from './dto';
+
+// ─── Pack Catalog ─────────────────────────────────────────────────────────────
+
+type PackMemoryEntry = { content: string; type: MemoryType; tags: string[] };
+type MemoryPack = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  tags: string[];
+  memories: PackMemoryEntry[];
+};
+
+const PACK_CATALOG: MemoryPack[] = [
+  {
+    id: 'system-design-patterns',
+    name: 'System Design Patterns',
+    description: 'Core distributed systems patterns every backend engineer should internalize.',
+    version: '1.0.0',
+    author: 'memory-os',
+    tags: ['architecture', 'distributed-systems', 'backend'],
+    memories: [
+      { content: 'When designing distributed caches, consistent hashing ensures that only K/N keys are remapped when a node is added or removed (K = keys, N = nodes), minimising cache stampedes.', type: MemoryType.SEMANTIC, tags: ['caching', 'consistent-hashing'] },
+      { content: 'CAP theorem: a distributed system can guarantee at most two of Consistency, Availability, and Partition Tolerance simultaneously. Under network partitions, choose between CP (strong consistency, e.g. HBase) or AP (high availability, e.g. Cassandra).', type: MemoryType.SEMANTIC, tags: ['cap-theorem', 'distributed-systems'] },
+      { content: 'CQRS separates read and write models. Commands mutate state; queries read from optimised projections. Use when read and write workloads have very different scalability requirements.', type: MemoryType.PROCEDURAL, tags: ['cqrs', 'architecture'] },
+      { content: 'Event sourcing stores every state change as an immutable event in an append-only log. Current state is derived by replaying events. Enables full audit trail, temporal queries, and event-driven integration.', type: MemoryType.SEMANTIC, tags: ['event-sourcing', 'architecture'] },
+      { content: 'The circuit breaker pattern wraps a remote call in a state machine: Closed (normal), Open (fail fast after threshold), Half-Open (probe with one request). Prevents cascading failures in microservices.', type: MemoryType.PROCEDURAL, tags: ['circuit-breaker', 'resilience'] },
+      { content: 'The Saga pattern coordinates distributed transactions via a sequence of local transactions and compensating transactions. Choose orchestration (central coordinator) or choreography (event-driven) based on complexity.', type: MemoryType.PROCEDURAL, tags: ['saga', 'distributed-transactions'] },
+      { content: 'Database sharding strategies: range-based (simple, hot-spot risk), hash-based (uniform distribution, hard to range-query), directory-based (flexible, adds lookup overhead).', type: MemoryType.SEMANTIC, tags: ['sharding', 'database', 'scalability'] },
+      { content: 'Backpressure is the mechanism by which a downstream service signals it is overwhelmed. Implement with bounded queues and rejection policies (drop, block, or shed load) rather than growing queues unboundedly.', type: MemoryType.SEMANTIC, tags: ['backpressure', 'resilience', 'queues'] },
+    ],
+  },
+  {
+    id: 'typescript-best-practices',
+    name: 'TypeScript Best Practices',
+    description: 'Opinionated TypeScript patterns for safe, maintainable codebases.',
+    version: '1.0.0',
+    author: 'memory-os',
+    tags: ['typescript', 'javascript', 'best-practices'],
+    memories: [
+      { content: "Use branded/nominal types for domain IDs to prevent mixing up different ID types at compile time. E.g.: `type UserId = string & { readonly _brand: 'UserId' }`. Create with a factory function, never cast raw strings directly.", type: MemoryType.SEMANTIC, tags: ['typescript', 'branded-types', 'type-safety'] },
+      { content: 'Prefer `unknown` over `any` for values from external boundaries (API responses, JSON.parse, user input). `unknown` forces explicit narrowing before use; `any` silently disables type checking.', type: MemoryType.SEMANTIC, tags: ['typescript', 'type-safety'] },
+      { content: 'Use discriminated unions with a `kind` or `type` literal field for modelling result variants. TypeScript narrows exhaustively in switch/if-else blocks, turning runtime bugs into compile errors.', type: MemoryType.PROCEDURAL, tags: ['typescript', 'discriminated-unions'] },
+      { content: 'The `satisfies` operator (TS 4.9+) validates a value against a type without widening it. Use it to get both type-checking and literal inference simultaneously.', type: MemoryType.SEMANTIC, tags: ['typescript', 'satisfies'] },
+      { content: 'Never use `as` type assertions as a shortcut for type mismatch. Prefer type guards (`function isUser(x: unknown): x is User`) or Zod parsing at runtime boundaries.', type: MemoryType.SEMANTIC, tags: ['typescript', 'type-guards'] },
+      { content: 'Mark function parameters and return types with `readonly` / `Readonly<T>` to prevent accidental mutation. Immutable data structures make functions easier to reason about and test.', type: MemoryType.PROCEDURAL, tags: ['typescript', 'immutability'] },
+      { content: 'Use `zod` (or a similar runtime validator) at every system boundary — HTTP endpoints, environment variables, external API responses. TypeScript types are erased at runtime; zod enforces them.', type: MemoryType.PROCEDURAL, tags: ['zod', 'validation', 'typescript'] },
+      { content: "Template literal types enable string-level type safety for patterns like HTTP methods or CSS units: `type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH'`.", type: MemoryType.SEMANTIC, tags: ['typescript', 'template-literal-types'] },
+    ],
+  },
+  {
+    id: 'aws-infrastructure',
+    name: 'AWS Infrastructure Guardrails',
+    description: 'Operational knowledge for safe, cost-efficient AWS deployments.',
+    version: '1.0.0',
+    author: 'memory-os',
+    tags: ['aws', 'infrastructure', 'cloud', 'devops'],
+    memories: [
+      { content: 'Always deploy RDS instances in private subnets with no public accessibility. Route application traffic through a VPC with public/private subnet separation. Use security groups as the primary network firewall.', type: MemoryType.PROCEDURAL, tags: ['aws', 'rds', 'vpc', 'security'] },
+      { content: 'Enable S3 bucket versioning for any bucket holding user data or deployment artifacts. Combined with lifecycle rules (expire old versions after 30 days), it provides cheap point-in-time recovery.', type: MemoryType.PROCEDURAL, tags: ['aws', 's3', 'backup'] },
+      { content: 'Use RDS Proxy between your application and RDS to pool and reuse database connections. Critical for serverless workloads (Lambda) where connection counts can spike and overwhelm Postgres.', type: MemoryType.PROCEDURAL, tags: ['aws', 'rds', 'rds-proxy', 'serverless'] },
+      { content: 'IAM least privilege: grant only the specific actions needed on specific resources. Prefer IAM roles for EC2/Lambda over access keys. Never embed AWS credentials in code or environment variables committed to git.', type: MemoryType.PROCEDURAL, tags: ['aws', 'iam', 'security'] },
+      { content: 'Use AWS Secrets Manager (not SSM Parameter Store plain text, not .env files) for database passwords and API keys. Rotate secrets automatically. Reference by ARN in ECS task definitions.', type: MemoryType.PROCEDURAL, tags: ['aws', 'secrets-manager', 'security'] },
+      { content: 'SQS + Lambda is the standard AWS pattern for decoupled async processing. Set a dead-letter queue (DLQ) on every consumer to catch poison messages. Use FIFO queues when ordering matters.', type: MemoryType.PROCEDURAL, tags: ['aws', 'sqs', 'lambda', 'async'] },
+      { content: 'CloudFront should front all static assets (S3) and API endpoints. It reduces latency via edge caching, provides DDoS protection through AWS Shield Standard, and enables WAF rules.', type: MemoryType.PROCEDURAL, tags: ['aws', 'cloudfront', 'cdn'] },
+      { content: 'Emit structured JSON logs (not plain strings) from your applications. CloudWatch Log Insights queries are dramatically faster on structured data. Use CloudWatch Alarms for operational monitoring.', type: MemoryType.PROCEDURAL, tags: ['aws', 'cloudwatch', 'observability'] },
+    ],
+  },
+];
 
 type RawRecallRow = {
   id: string;
@@ -43,6 +118,7 @@ export class MemoryService {
     private readonly prisma: PrismaService,
     @Inject(EMBEDDING_PROVIDER)
     private readonly embeddingProvider: EmbeddingProvider,
+    private readonly queue: QueueService,
   ) {}
 
   /**
@@ -84,8 +160,7 @@ export class MemoryService {
       include: { tags: true },
     });
 
-    // Non-blocking: generate embedding after returning
-    setImmediate(() => void this.generateEmbedding(memory.id, parsed.content));
+    await this.queue.send(EMBEDDING_QUEUE, { memoryId: memory.id, content: parsed.content }, { retryLimit: 3, retryDelay: 10 });
 
     return memory;
   }
@@ -177,6 +252,7 @@ export class MemoryService {
         const score = 0.7 * row.cosine_score + 0.2 * recencyBoost + 0.1 * accessBoost;
         return { ...row, score, tags: [] as { memoryId: string; tag: string; createdAt: Date }[] };
       })
+      .filter(row => parsed.minScore === undefined || row.score >= parsed.minScore)
       .sort((a, b) => b.score - a.score)
       .slice(0, parsed.limit);
 
@@ -358,6 +434,100 @@ export class MemoryService {
     return result.count;
   }
 
+  // ─── Ephemeral namespaces ────────────────────────────────────────────────────
+
+  async createEphemeralNamespace(input: CreateEphemeralNamespaceInput): Promise<Namespace> {
+    const parsed = CreateEphemeralNamespaceInputSchema.parse(input);
+    const ttlMs = { '1h': 3_600_000, '24h': 86_400_000, '7d': 604_800_000 }[parsed.ttl];
+    const expiresAt = new Date(Date.now() + ttlMs);
+    return this.prisma.namespace.create({
+      data: { userId: parsed.userId, name: parsed.name, isEphemeral: true, expiresAt },
+    });
+  }
+
+  @Cron('0 * * * *')
+  async purgeExpiredNamespaces(): Promise<void> {
+    await this.prisma.namespace.deleteMany({
+      where: { isEphemeral: true, expiresAt: { lt: new Date() } },
+    });
+  }
+
+  // ─── Memory Packs ────────────────────────────────────────────────────────────
+
+  listPackCatalog(): Array<{ id: string; name: string; description: string; author: string; version: string; memoryCount: number; tags: string[] }> {
+    return PACK_CATALOG.map(p => ({
+      id: p.id,
+      name: p.name,
+      description: p.description,
+      author: p.author,
+      version: p.version,
+      memoryCount: p.memories.length,
+      tags: p.tags,
+    }));
+  }
+
+  async importPack(packId: string, namespaceId: string, userId: string): Promise<{ imported: number }> {
+    const pack = PACK_CATALOG.find(p => p.id === packId);
+    if (!pack) throw new Error(`Unknown pack: ${packId}`);
+
+    let imported = 0;
+    for (const entry of pack.memories) {
+      await this.remember({
+        content: entry.content,
+        userId,
+        namespaceId,
+        type: entry.type,
+        tags: entry.tags,
+        metadata: { packId, packVersion: pack.version },
+        source: { client: 'memory-pack', sessionId: packId, timestamp: new Date().toISOString() },
+      });
+      imported++;
+    }
+    return { imported };
+  }
+
+  // ─── Graph ───────────────────────────────────────────────────────────────────
+
+  async getGraph(
+    userId: string,
+    namespaceId?: string,
+    limit = 200,
+  ): Promise<{
+    nodes: Array<{ id: string; content: string; type: MemoryType; status: string; tags: string[] }>;
+    edges: Array<{ source: string; target: string; relationType: string; weight: number }>;
+  }> {
+    const memories = await this.prisma.memory.findMany({
+      where: { userId, deletedAt: null, ...(namespaceId ? { namespaceId } : {}) },
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: { tags: true },
+    });
+
+    const ids = memories.map(m => m.id);
+
+    const relations = ids.length > 0
+      ? await this.prisma.memoryRelation.findMany({
+          where: { AND: [{ fromMemoryId: { in: ids } }, { toMemoryId: { in: ids } }] },
+        })
+      : [];
+
+    return {
+      nodes: memories.map(m => ({
+        id: m.id,
+        content: m.content,
+        type: m.type,
+        status: m.status,
+        tags: m.tags.map(t => t.tag),
+      })),
+      edges: relations.map(r => ({
+        source: r.fromMemoryId,
+        target: r.toMemoryId,
+        relationType: r.relationType,
+        weight: r.weight,
+      })),
+    };
+  }
+
   // ─── Private helpers ────────────────────────────────────────────────────────
 
   private classifyType(content: string): MemoryType {
@@ -389,27 +559,6 @@ export class MemoryService {
     }
 
     return [...tags].slice(0, 20);
-  }
-
-  private async generateEmbedding(memoryId: string, content: string): Promise<void> {
-    try {
-      const embedding = await this.embeddingProvider.embed(content);
-      // Safe: embedding is number[] from our provider — no injection risk
-      const vecLiteral = Prisma.raw(`'[${embedding.join(',')}]'`);
-      await this.prisma.$executeRaw(Prisma.sql`
-        UPDATE "Memory"
-        SET embedding      = ${vecLiteral}::vector,
-            status         = 'READY'::"MemoryStatus",
-            "embeddingError" = NULL
-        WHERE id = ${memoryId}
-      `);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await this.prisma.memory.update({
-        where: { id: memoryId },
-        data: { status: MemoryStatus.FAILED, embeddingError: message },
-      });
-    }
   }
 
   private async getDescendantNamespaceIds(namespaceId: string): Promise<string[]> {

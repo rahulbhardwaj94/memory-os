@@ -42,9 +42,15 @@ export function registerRecallTool(
           .max(50)
           .optional()
           .describe('Maximum number of results (default 10)'),
+        minScore: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe('Minimum hybrid score threshold (0–1, default 0.0 — returns all matches)'),
       },
     },
-    async ({ query, namespace, type, limit = 10 }) => {
+    async ({ query, namespace, type, limit = 10, minScore }) => {
       try {
         let namespaceId: string | undefined;
         if (namespace) {
@@ -57,6 +63,7 @@ export function registerRecallTool(
           namespaceId,
           type: type as MemoryType | undefined,
           limit,
+          minScore,
           includeDescendants: true,
         });
 
