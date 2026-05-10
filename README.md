@@ -9,6 +9,10 @@
 
 A unified, local-first memory vault exposed via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). Works with Claude Desktop, Cursor, Cline, Zed, or any MCP-compatible client.
 
+![memory-os demo](./docs/demo.gif)
+
+> Regenerate the GIF: `brew install vhs && vhs docs/demo.tape`
+
 ---
 
 ## Why memory-os?
@@ -17,8 +21,45 @@ Most AI memory tools either lock your data into a vendor's cloud or live inside 
 
 ---
 
-![demo](./docs/demo.gif)
-<!-- TODO: record a 30-second Quicktime capture of Claude Desktop using remember + recall, drop it at docs/demo.gif -->
+## Demo
+
+**Conversation 1** — you tell Claude something worth remembering:
+
+```
+You: Remember that I always use strict TypeScript, prefer functional React with hooks,
+     and never use class components.
+
+Claude: [calls remember]
+        ✔ Stored — "TypeScript preferences" · SEMANTIC · #typescript #react
+```
+
+**Conversation 2** — days later, fresh session, Claude has no context:
+
+```
+You: What stack should we use for this new project?
+
+Claude: [calls recall("coding preferences typescript react")]
+        ✔ 3 memories retrieved (score ≥ 0.82)
+
+        Based on your preferences:
+        · Strict TypeScript — always enabled
+        · React with hooks — no class components
+        · …
+```
+
+**Under the hood** — what the MCP tools actually send:
+
+```jsonc
+// remember
+{ "content": "Always use strict TypeScript, prefer functional React with hooks, no class components",
+  "type": "SEMANTIC", "tags": ["typescript", "react"], "namespace": "personal" }
+
+// recall (next session)
+{ "query": "coding preferences typescript react", "limit": 5, "minScore": 0.7 }
+// → returns the memory above with score 0.91
+```
+
+The vault persists across every client — remember in Claude Desktop, recall in Cursor, same data.
 
 ---
 
@@ -34,7 +75,7 @@ npm run setup
 
 The setup wizard will:
 - Ask which embedding provider you want (default: **Ollama — free and fully local**)
-- Generate a secure auth secret and write your `.env` automatically
+- Write your `.env` automatically
 - Start Postgres, run migrations, and build the server
 
 Then start everything with one command:
@@ -43,7 +84,7 @@ Then start everything with one command:
 npm run dev   # HTTP server :3000 + Web UI :3001
 ```
 
-Open **http://localhost:3001**, create your account, go to **Settings → API Keys**, and paste the key into your MCP client config (see below).
+Open **http://localhost:3001** — your vault is ready. No account or login required.
 
 ---
 
@@ -77,9 +118,7 @@ npm run migrate && npm run generate && npm run migrate:ollama
 
 After running `npm run setup` and creating your account:
 
-1. Go to **http://localhost:3001/settings** → **API Keys** → create a key named `Claude Desktop`
-2. Copy the `mo_...` key — it is shown only once
-3. Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+1. Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -89,15 +128,14 @@ After running `npm run setup` and creating your account:
       "args": ["/absolute/path/to/memory-os/apps/server/dist/mcp/mcp-server.js"],
       "env": {
         "DATABASE_URL": "postgresql://memory_os:memory_os@localhost:5432/memory_os",
-        "EMBEDDING_PROVIDER": "ollama",
-        "MCP_API_KEY": "mo_your_key_here"
+        "EMBEDDING_PROVIDER": "ollama"
       }
     }
   }
 }
 ```
 
-4. Restart Claude Desktop — you'll see memory-os tools in the tool picker.
+2. Restart Claude Desktop — you'll see memory-os tools in the tool picker.
 
 **Quick test:**
 1. Say: *"Remember that I prefer NestJS over Express"*
@@ -111,33 +149,15 @@ After running `npm run setup` and creating your account:
 A browser dashboard to browse, search, and manage your vault.
 
 ```bash
-# After running npm run start (HTTP server on :3000)
+# After running npm run setup and npm run start (HTTP server on :3000)
 cp apps/web/.env.local.example apps/web/.env.local
 
 npm run web   # → http://localhost:3001
 ```
 
-Open `http://localhost:3001` and create an account. Your first account becomes your vault owner.
+Open **http://localhost:3001** — your vault is immediately accessible. No login required for local use.
 
-**MCP clients (Claude Desktop, Cursor, Cline):** after signing up, go to **Settings → API Keys**, create a named key, and set it in your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "memory-os": {
-      "command": "node",
-      "args": ["/absolute/path/to/memory-os/apps/server/dist/mcp/mcp-server.js"],
-      "env": {
-        "DATABASE_URL": "postgresql://memory_os:memory_os@localhost:5432/memory_os",
-        "EMBEDDING_PROVIDER": "ollama",
-        "MCP_API_KEY": "mo_your_key_here"
-      }
-    }
-  }
-}
-```
-
-If `MCP_API_KEY` is omitted, the MCP server falls back to the `DEFAULT_USER_EMAIL` auto-created user (backwards-compatible with v0.1–v0.3 setups).
+Pages: **Vault** (browse all memories) · **Search** (semantic search) · **Graph** (knowledge graph viz) · **Packs** (import curated memory sets) · **Settings** (MCP client config)
 
 ---
 
@@ -272,6 +292,7 @@ work/acme/sprint-42
 | `RATE_LIMIT_MAX` | `120` | Max REST requests per window per IP |
 | `RATE_LIMIT_TTL_MS` | `60000` | Rate-limit window in milliseconds |
 | `CORS_ORIGIN` | `http://localhost:3001` | Allowed CORS origin(s) in production |
+| `MCP_API_KEY` | — | Optional. When set, the MCP server runs as the owner of this key |
 
 ---
 
@@ -308,7 +329,7 @@ cd apps/web && npx tsc --noEmit
 - **v0.3 ✅ — Graph MCP tools**: `relate` and `traverse` now exposed to MCP clients
 - **v0.3 ✅ — CI/CD**: GitHub Actions pipeline (test + typecheck + lint + build)
 - **v0.4 ✅ — Multi-user auth**: Better Auth (email/password), named API keys, per-user scoping
-- **v0.5 — Hosted option**: managed Postgres + embeddings, zero-config setup
+- **v0.5 ✅ — No-auth local mode**: single-user self-hosted setup, no login required, zero-friction onboarding
 - **v1.0 — Federated sync**: optional encrypted sync across devices
 
 ---

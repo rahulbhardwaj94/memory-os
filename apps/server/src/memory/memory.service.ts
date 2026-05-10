@@ -137,6 +137,7 @@ export class MemoryService {
   async remember(input: RememberInput): Promise<MemoryWithTags> {
     const parsed = RememberInputSchema.parse(input);
 
+    const namespaceId = parsed.namespaceId ?? await this.resolveDefaultNamespace(parsed.userId);
     const type = parsed.type ?? this.classifyType(parsed.content);
     const autoTags = this.extractTags(parsed.content);
     const allTags = [...new Set([...parsed.tags, ...autoTags])];
@@ -144,7 +145,7 @@ export class MemoryService {
     const memory = await this.prisma.memory.create({
       data: {
         userId: parsed.userId,
-        namespaceId: parsed.namespaceId,
+        namespaceId,
         type,
         content: parsed.content,
         status: MemoryStatus.PENDING_EMBEDDING,
@@ -559,6 +560,17 @@ export class MemoryService {
     }
 
     return [...tags].slice(0, 20);
+  }
+
+  private async resolveDefaultNamespace(userId: string): Promise<string> {
+    const existing = await this.prisma.namespace.findFirst({
+      where: { userId, name: 'default', parentId: null },
+    });
+    if (existing) return existing.id;
+    const created = await this.prisma.namespace.create({
+      data: { userId, name: 'default' },
+    });
+    return created.id;
   }
 
   private async getDescendantNamespaceIds(namespaceId: string): Promise<string[]> {

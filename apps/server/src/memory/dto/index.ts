@@ -15,7 +15,7 @@ export type Source = z.infer<typeof SourceSchema>;
 export const RememberInputSchema = z.object({
   content: z.string().min(1).max(10_000),
   userId: z.string().min(1),
-  namespaceId: z.string().min(1),
+  namespaceId: z.string().min(1).optional(),
   type: z.nativeEnum(MemoryType).optional(),
   tags: z.array(z.string().min(1).max(100)).default([]),
   metadata: z.record(z.string(), z.unknown()).default({}),

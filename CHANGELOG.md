@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-05-07
+
+### Changed
+- **No-auth local mode** — memory-os is now zero-friction for self-hosted use. No account creation or API key required. The server automatically creates and uses a single local user (`DEFAULT_USER_EMAIL`).
+- `AuthGuard` simplified to always inject the local user — sessions and Better Auth are no longer enforced for API access
+- Web `auth-client` replaced with a permanent local session stub — all UI pages load immediately without a login redirect
+- Login and signup pages redirect to `/` (kept for backwards-compat with bookmarks)
+- Settings page replaced with an MCP client setup guide (copy-paste config + tool reference)
+- README quickstart simplified: `npm run setup && npm run dev` → open `http://localhost:3001` — done
+
+---
+
 ## [0.4.0] — 2026-05-06
 
 ### Added

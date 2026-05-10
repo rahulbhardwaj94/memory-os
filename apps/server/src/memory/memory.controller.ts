@@ -19,7 +19,7 @@ export class MemoryController {
     @Body()
     body: {
       content: string;
-      namespaceId: string;
+      namespaceId?: string;
       type?: 'EPISODIC' | 'SEMANTIC' | 'PROCEDURAL';
       tags?: string[];
       metadata?: Record<string, unknown>;
